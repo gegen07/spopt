@@ -1,0 +1,543 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Regional-k-means\n",
+    "\n",
+    "**Authors: [Sergio Rey](https://github.com/sjsrey), [Xin Feng](https://github.com/xf37)**\n",
+    "\n",
+    "Regional-k-means is K-means with the constraint that each cluster forms a spatially connected component. The algorithm is developed by [Sergio Rey](https://github.com/sjsrey)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import os\n",
+    "import networkx\n",
+    "import libpysal\n",
+    "import numpy\n",
+    "import geopandas\n",
+    "from collections import defaultdict\n",
+    "\n",
+    "import sys\n",
+    "import os\n",
+    "sys.path.append(os.path.abspath('..'))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import spopt"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Create a [spatial weights object](https://pysal.org/libpysal/tutorial.html) for a 10*10 regular lattice. "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "100"
+      ]
+     },
+     "execution_count": 3,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "dim = 10\n",
+    "w = libpysal.weights.lat2W(dim,dim)\n",
+    "w.n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Draw 100 random samples (the given shape is (100, 3)) from a normal (Gaussian) distribution. Then, there are three values for each lattice. They are variables in the dataframe that will be used to measure regional homogeneity."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "numpy.random.seed(12345)\n",
+    "data = numpy.random.normal(size=(w.n,3))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "array([[-2.04707659e-01,  4.78943338e-01, -5.19438715e-01],\n",
+       "       [-5.55730304e-01,  1.96578057e+00,  1.39340583e+00],\n",
+       "       [ 9.29078767e-02,  2.81746153e-01,  7.69022568e-01],\n",
+       "       [ 1.24643474e+00,  1.00718936e+00, -1.29622111e+00],\n",
+       "       [ 2.74991633e-01,  2.28912879e-01,  1.35291684e+00],\n",
+       "       [ 8.86429341e-01, -2.00163731e+00, -3.71842537e-01],\n",
+       "       [ 1.66902531e+00, -4.38569736e-01, -5.39741446e-01],\n",
+       "       [ 4.76985010e-01,  3.24894392e+00, -1.02122752e+00],\n",
+       "       [-5.77087303e-01,  1.24121276e-01,  3.02613562e-01],\n",
+       "       [ 5.23772068e-01,  9.40277775e-04,  1.34380979e+00],\n",
+       "       [-7.13543985e-01, -8.31153539e-01, -2.37023165e+00],\n",
+       "       [-1.86076079e+00, -8.60757398e-01,  5.60145293e-01],\n",
+       "       [-1.26593449e+00,  1.19827125e-01, -1.06351245e+00],\n",
+       "       [ 3.32882716e-01, -2.35941881e+00, -1.99542955e-01],\n",
+       "       [-1.54199553e+00, -9.70735912e-01, -1.30703025e+00],\n",
+       "       [ 2.86349747e-01,  3.77984111e-01, -7.53886535e-01],\n",
+       "       [ 3.31285650e-01,  1.34974221e+00,  6.98766888e-02],\n",
+       "       [ 2.46674110e-01, -1.18616011e-02,  1.00481159e+00],\n",
+       "       [ 1.32719461e+00, -9.19261558e-01, -1.54910644e+00],\n",
+       "       [ 2.21845987e-02,  7.58363145e-01, -6.60524328e-01],\n",
+       "       [ 8.62580083e-01, -1.00319021e-02,  5.00093559e-02],\n",
+       "       [ 6.70215594e-01,  8.52965032e-01, -9.55868852e-01],\n",
+       "       [-2.34933207e-02, -2.30423388e+00, -6.52468841e-01],\n",
+       "       [-1.21830198e+00, -1.33260971e+00,  1.07462269e+00],\n",
+       "       [ 7.23641505e-01,  6.90001853e-01,  1.00154344e+00],\n",
+       "       [-5.03087391e-01, -6.22274225e-01, -9.21168608e-01],\n",
+       "       [-7.26213493e-01,  2.22895546e-01,  5.13161009e-02],\n",
+       "       [-1.15771947e+00,  8.16706936e-01,  4.33609606e-01],\n",
+       "       [ 1.01073695e+00,  1.82487521e+00, -9.97518248e-01],\n",
+       "       [ 8.50591099e-01, -1.31577601e-01,  9.12414152e-01],\n",
+       "       [ 1.88210680e-01,  2.16946144e+00, -1.14928205e-01],\n",
+       "       [ 2.00369736e+00,  2.96101523e-02,  7.95253156e-01],\n",
+       "       [ 1.18109754e-01, -7.48531548e-01,  5.84969738e-01],\n",
+       "       [ 1.52676573e-01, -1.56565729e+00, -5.62540188e-01],\n",
+       "       [-3.26641392e-02, -9.29006202e-01, -4.82572646e-01],\n",
+       "       [-3.62638461e-02,  1.09539006e+00,  9.80928477e-01],\n",
+       "       [-5.89487686e-01,  1.58170009e+00, -5.28734826e-01],\n",
+       "       [ 4.57001871e-01,  9.29968759e-01, -1.56927061e+00],\n",
+       "       [-1.02248698e+00, -4.02826924e-01,  2.20486863e-01],\n",
+       "       [-1.93401108e-01,  6.69158336e-01, -1.64898482e+00],\n",
+       "       [-2.25279725e+00, -1.16683222e+00,  3.53607102e-01],\n",
+       "       [ 7.02110171e-01, -2.74569205e-01, -1.39142188e-01],\n",
+       "       [ 1.07657222e-01, -6.06545125e-01, -4.17064408e-01],\n",
+       "       [-1.70070368e-02, -1.22414528e+00, -1.80083991e+00],\n",
+       "       [ 1.63473620e+00,  9.89008302e-01,  4.57940143e-01],\n",
+       "       [ 5.55154410e-01,  1.30671972e+00, -4.40553570e-01],\n",
+       "       [-3.01350280e-01,  4.98791490e-01, -8.23991040e-01],\n",
+       "       [ 1.32056584e+00,  5.07964786e-01, -6.53437675e-01],\n",
+       "       [ 1.86979514e-01, -3.91725249e-01, -2.72292975e-01],\n",
+       "       [-1.71414356e-02,  6.80320749e-01,  6.35512357e-01],\n",
+       "       [-7.57176502e-01,  7.18085834e-01, -3.04273076e-01],\n",
+       "       [-1.67779025e+00,  4.26986085e-01, -1.56373985e+00],\n",
+       "       [-3.67487521e-01,  1.04591253e+00,  1.21995436e+00],\n",
+       "       [-2.47699116e-01, -4.16232132e-01, -1.16747004e-01],\n",
+       "       [-1.84478762e+00,  2.06870785e+00, -7.76967474e-01],\n",
+       "       [ 1.44016687e+00, -1.10557360e-01,  1.22738699e+00],\n",
+       "       [ 1.92078426e+00,  7.46433038e-01,  2.22465959e+00],\n",
+       "       [-6.79400410e-01,  7.27368782e-01, -8.68730734e-01],\n",
+       "       [-1.21385091e+00, -4.70630931e-01, -9.19241697e-01],\n",
+       "       [-8.38826689e-01,  4.35155305e-01, -5.57804717e-01],\n",
+       "       [-5.67454871e-01, -3.72641553e-01, -9.26556901e-01],\n",
+       "       [ 1.75510839e+00,  1.20980999e+00,  1.27002473e+00],\n",
+       "       [-9.74378127e-01, -6.34709255e-01, -3.95700752e-01],\n",
+       "       [-2.89435900e-01, -7.34297072e-01, -7.28504679e-01],\n",
+       "       [ 8.38775073e-01,  2.66893213e-01,  7.21194339e-01],\n",
+       "       [ 9.10982642e-01, -1.02090261e+00, -1.41341604e+00],\n",
+       "       [ 1.29660784e+00,  2.52275209e-01,  1.12748110e+00],\n",
+       "       [-5.68363447e-01,  3.09362168e-01, -5.77385473e-01],\n",
+       "       [-1.16863407e+00, -8.25019972e-01, -2.64440949e+00],\n",
+       "       [-1.52985803e-01, -7.51921003e-01, -1.32609252e-01],\n",
+       "       [ 1.45729970e+00,  6.09511845e-01, -4.93779257e-01],\n",
+       "       [ 1.23997988e+00, -1.35722140e-01,  1.43004181e+00],\n",
+       "       [-8.46852451e-01,  6.03282130e-01,  1.26357226e+00],\n",
+       "       [-2.55490556e-01, -4.45688380e-01,  4.68366681e-01],\n",
+       "       [-9.61603924e-01, -1.82450454e+00,  6.25428156e-01],\n",
+       "       [ 1.02287238e+00,  1.10742460e+00,  9.09370895e-02],\n",
+       "       [-3.50108657e-01,  2.17957016e-01, -8.94813130e-01],\n",
+       "       [-1.74149395e+00, -1.05225574e+00,  1.43660279e+00],\n",
+       "       [-5.76207386e-01, -2.42029443e+00, -1.06232963e+00],\n",
+       "       [ 2.37372262e-01,  9.57369064e-04,  6.52531808e-02],\n",
+       "       [-1.36752411e+00, -3.02800519e-02,  9.40489321e-01],\n",
+       "       [-6.42436751e-01,  1.04017925e+00, -1.08292226e+00],\n",
+       "       [ 4.29213588e-01, -2.36223669e-01,  6.41817816e-01],\n",
+       "       [-3.31660557e-01,  1.39407223e+00, -1.07674194e+00],\n",
+       "       [-1.92465982e-01, -8.71187651e-01,  4.20851997e-01],\n",
+       "       [-1.21141107e+00, -2.58866912e-01, -5.81646850e-01],\n",
+       "       [-1.26042063e+00,  4.64574793e-01, -1.07024091e+00],\n",
+       "       [ 8.04222698e-01, -1.56735508e-01,  2.01039001e+00],\n",
+       "       [-8.87104430e-01, -9.77936232e-01, -2.67217350e-01],\n",
+       "       [ 4.83337822e-01, -4.00332733e-01,  4.49880415e-01],\n",
+       "       [ 3.99593953e-01, -1.51574804e-01, -2.55793406e+00],\n",
+       "       [ 1.60806841e-01,  7.65250677e-02, -2.97204166e-01],\n",
+       "       [-1.29427402e+00, -8.85180013e-01, -1.87496526e-01],\n",
+       "       [-4.93560000e-01, -1.15412964e-01, -3.50744607e-01],\n",
+       "       [ 4.46973764e-02, -8.97756316e-01,  8.90873502e-01],\n",
+       "       [-1.15118516e+00, -2.61230270e+00,  1.14125019e+00],\n",
+       "       [-8.67135525e-01,  3.83583258e-01, -4.37030164e-01],\n",
+       "       [ 3.47488810e-01, -1.23017904e+00,  5.71078139e-01],\n",
+       "       [ 6.00612128e-02, -2.25523994e-01,  1.34972614e+00],\n",
+       "       [ 1.35029973e+00, -3.86653322e-01,  8.65989542e-01]])"
+      ]
+     },
+     "execution_count": 5,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "data"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The neighbors of each lattice can be checked by:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "{0: [10, 1],\n",
+       " 10: [0, 20, 11],\n",
+       " 1: [0, 11, 2],\n",
+       " 11: [1, 10, 21, 12],\n",
+       " 2: [1, 12, 3],\n",
+       " 12: [2, 11, 22, 13],\n",
+       " 3: [2, 13, 4],\n",
+       " 13: [3, 12, 23, 14],\n",
+       " 4: [3, 14, 5],\n",
+       " 14: [4, 13, 24, 15],\n",
+       " 5: [4, 15, 6],\n",
+       " 15: [5, 14, 25, 16],\n",
+       " 6: [5, 16, 7],\n",
+       " 16: [6, 15, 26, 17],\n",
+       " 7: [6, 17, 8],\n",
+       " 17: [7, 16, 27, 18],\n",
+       " 8: [7, 18, 9],\n",
+       " 18: [8, 17, 28, 19],\n",
+       " 9: [8, 19],\n",
+       " 19: [9, 18, 29],\n",
+       " 20: [10, 30, 21],\n",
+       " 21: [11, 20, 31, 22],\n",
+       " 22: [12, 21, 32, 23],\n",
+       " 23: [13, 22, 33, 24],\n",
+       " 24: [14, 23, 34, 25],\n",
+       " 25: [15, 24, 35, 26],\n",
+       " 26: [16, 25, 36, 27],\n",
+       " 27: [17, 26, 37, 28],\n",
+       " 28: [18, 27, 38, 29],\n",
+       " 29: [19, 28, 39],\n",
+       " 30: [20, 40, 31],\n",
+       " 31: [21, 30, 41, 32],\n",
+       " 32: [22, 31, 42, 33],\n",
+       " 33: [23, 32, 43, 34],\n",
+       " 34: [24, 33, 44, 35],\n",
+       " 35: [25, 34, 45, 36],\n",
+       " 36: [26, 35, 46, 37],\n",
+       " 37: [27, 36, 47, 38],\n",
+       " 38: [28, 37, 48, 39],\n",
+       " 39: [29, 38, 49],\n",
+       " 40: [30, 50, 41],\n",
+       " 41: [31, 40, 51, 42],\n",
+       " 42: [32, 41, 52, 43],\n",
+       " 43: [33, 42, 53, 44],\n",
+       " 44: [34, 43, 54, 45],\n",
+       " 45: [35, 44, 55, 46],\n",
+       " 46: [36, 45, 56, 47],\n",
+       " 47: [37, 46, 57, 48],\n",
+       " 48: [38, 47, 58, 49],\n",
+       " 49: [39, 48, 59],\n",
+       " 50: [40, 60, 51],\n",
+       " 51: [41, 50, 61, 52],\n",
+       " 52: [42, 51, 62, 53],\n",
+       " 53: [43, 52, 63, 54],\n",
+       " 54: [44, 53, 64, 55],\n",
+       " 55: [45, 54, 65, 56],\n",
+       " 56: [46, 55, 66, 57],\n",
+       " 57: [47, 56, 67, 58],\n",
+       " 58: [48, 57, 68, 59],\n",
+       " 59: [49, 58, 69],\n",
+       " 60: [50, 70, 61],\n",
+       " 61: [51, 60, 71, 62],\n",
+       " 62: [52, 61, 72, 63],\n",
+       " 63: [53, 62, 73, 64],\n",
+       " 64: [54, 63, 74, 65],\n",
+       " 65: [55, 64, 75, 66],\n",
+       " 66: [56, 65, 76, 67],\n",
+       " 67: [57, 66, 77, 68],\n",
+       " 68: [58, 67, 78, 69],\n",
+       " 69: [59, 68, 79],\n",
+       " 70: [60, 80, 71],\n",
+       " 71: [61, 70, 81, 72],\n",
+       " 72: [62, 71, 82, 73],\n",
+       " 73: [63, 72, 83, 74],\n",
+       " 74: [64, 73, 84, 75],\n",
+       " 75: [65, 74, 85, 76],\n",
+       " 76: [66, 75, 86, 77],\n",
+       " 77: [67, 76, 87, 78],\n",
+       " 78: [68, 77, 88, 79],\n",
+       " 79: [69, 78, 89],\n",
+       " 80: [70, 90, 81],\n",
+       " 81: [71, 80, 91, 82],\n",
+       " 82: [72, 81, 92, 83],\n",
+       " 83: [73, 82, 93, 84],\n",
+       " 84: [74, 83, 94, 85],\n",
+       " 85: [75, 84, 95, 86],\n",
+       " 86: [76, 85, 96, 87],\n",
+       " 87: [77, 86, 97, 88],\n",
+       " 88: [78, 87, 98, 89],\n",
+       " 89: [79, 88, 99],\n",
+       " 90: [80, 91],\n",
+       " 91: [81, 90, 92],\n",
+       " 92: [82, 91, 93],\n",
+       " 93: [83, 92, 94],\n",
+       " 94: [84, 93, 95],\n",
+       " 95: [85, 94, 96],\n",
+       " 96: [86, 95, 97],\n",
+       " 97: [87, 96, 98],\n",
+       " 98: [88, 97, 99],\n",
+       " 99: [89, 98]}"
+      ]
+     },
+     "execution_count": 6,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "w.neighbors"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "We first explore the simulated data by building a 10*10 lattice shapefile."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "libpysal.weights.build_lattice_shapefile(dim, dim, \"lattice.shp\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<matplotlib.axes._subplots.AxesSubplot at 0x7fe8d83f58b0>"
+      ]
+     },
+     "execution_count": 8,
+     "metadata": {},
+     "output_type": "execute_result"
+    },
+    {
+     "data": {
+      "image/png": "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\n",
+      "text/plain": [
+       "<Figure size 432x288 with 1 Axes>"
+      ]
+     },
+     "metadata": {
+      "needs_background": "light"
+     },
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "gdf = geopandas.read_file('lattice.shp')\n",
+    "gdf.plot(column='ID')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Regionalization\n",
+    "\n",
+    "With `reg-k-means`, we aggregate 100 simulated lattices into 20 regions.\n",
+    "\n",
+    "The model can then be solved:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "RKM = spopt.RegionKMeansHeuristic\n",
+    "model = RKM(data, 20, w)\n",
+    "model.solve()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "array([12,  3,  3,  3,  3,  3, 19, 19, 17, 11, 12,  9,  9,  7,  7,  2,  2,\n",
+       "        2, 17, 11, 12, 15,  9,  7, 18,  2, 13, 13,  6,  6, 15, 15,  9, 18,\n",
+       "       18,  2, 13, 13,  0,  6, 15,  1,  1, 18, 18, 13, 13, 13,  0,  6,  1,\n",
+       "        1,  4,  4, 18, 18,  0,  0,  0,  0,  1, 16,  4,  4,  4, 10, 10, 14,\n",
+       "        5,  5, 16, 16, 16,  4,  8, 10, 10, 14,  5,  5, 16,  8, 16,  8,  8,\n",
+       "       10, 10, 14,  5, 14,  8,  8,  8,  8,  8, 10, 10, 14, 14, 14])"
+      ]
+     },
+     "execution_count": 10,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "model.labels_"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<matplotlib.axes._subplots.AxesSubplot at 0x7fe8c83ade20>"
+      ]
+     },
+     "execution_count": 11,
+     "metadata": {},
+     "output_type": "execute_result"
+    },
+    {
+     "data": {
+      "image/png": "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\n",
+      "text/plain": [
+       "<Figure size 432x288 with 1 Axes>"
+      ]
+     },
+     "metadata": {
+      "needs_background": "light"
+     },
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "gdf['region'] = model.labels_\n",
+    "gdf.plot(column='region')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The model solution results in 20 spatially connected regions. We can summarize which lattice belongs to which region:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "areas = numpy.arange(dim*dim)\n",
+    "regions = [areas[model.labels_==region] for region in range(20)]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[array([38, 48, 56, 57, 58, 59]),\n",
+       " array([41, 42, 50, 51, 60]),\n",
+       " array([15, 16, 17, 25, 35]),\n",
+       " array([1, 2, 3, 4, 5]),\n",
+       " array([52, 53, 62, 63, 64, 73]),\n",
+       " array([68, 69, 78, 79, 88]),\n",
+       " array([28, 29, 39, 49]),\n",
+       " array([13, 14, 23]),\n",
+       " array([74, 81, 83, 84, 90, 91, 92, 93, 94]),\n",
+       " array([11, 12, 22, 32]),\n",
+       " array([65, 66, 75, 76, 85, 86, 95, 96]),\n",
+       " array([ 9, 19]),\n",
+       " array([ 0, 10, 20]),\n",
+       " array([26, 27, 36, 37, 45, 46, 47]),\n",
+       " array([67, 77, 87, 89, 97, 98, 99]),\n",
+       " array([21, 30, 31, 40]),\n",
+       " array([61, 70, 71, 72, 80, 82]),\n",
+       " array([ 8, 18]),\n",
+       " array([24, 33, 34, 43, 44, 54, 55]),\n",
+       " array([6, 7])]"
+      ]
+     },
+     "execution_count": 13,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "regions"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.8.3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 2
+}
